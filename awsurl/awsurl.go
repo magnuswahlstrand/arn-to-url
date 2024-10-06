@@ -52,22 +52,9 @@ func urlWithOptionalRegion(res arn.ARN, path string) string {
 	}
 }
 
-func FromArn(input string) (string, error) {
-	res, err := arn.Parse(input)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse ARN %q: %w", input, err)
-	}
-	path, err := pathFromArn(res)
-	if err != nil {
-		return "", err
-	}
-
-	return urlWithOptionalRegion(res, path), nil
-}
-
 type Resolver struct {
 	AccessPortalDomain string
-	RoleName           string
+	RoleMapping        map[string]string
 }
 
 func (c *Resolver) FromArn2(input string) (string, error) {
@@ -82,14 +69,33 @@ func (c *Resolver) FromArn2(input string) (string, error) {
 	awsUrl := urlWithOptionalRegion(res, path)
 
 	if c.AccessPortalDomain != "" {
+		roleName := c.RoleMapping[res.AccountID]
+
 		return fmt.Sprintf("https://%s.awsapps.com/start/#/console?account_id=%s&role_name=%s&destination=%s",
 			c.AccessPortalDomain,
 			res.AccountID,
-			c.RoleName,
+			roleName,
 			awsUrl,
 		), nil
 	} else {
 		return awsUrl, nil
 	}
+
+}
+
+func NewResolver(domain string, mappingList []string) (*Resolver, error) {
+	roleMapping := map[string]string{}
+	for _, mapping := range mappingList {
+		parts := strings.SplitN(mapping, ":", 2)
+		if len(parts) < 2 {
+			return nil, fmt.Errorf("invalid role mapping %q", mapping)
+		}
+		roleMapping[parts[0]] = parts[1]
+	}
+
+	return &Resolver{
+		AccessPortalDomain: domain,
+		RoleMapping:        roleMapping,
+	}, nil
 
 }

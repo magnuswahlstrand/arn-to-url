@@ -39,7 +39,7 @@ func TestDestinationUrl(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := FromArn(tt.input)
+			got, err := FromArn2(tt.input)
 			if err != nil {
 				t.Fatal(err)
 			}
