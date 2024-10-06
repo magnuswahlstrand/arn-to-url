@@ -1,0 +1,10 @@
+#!/bin/sh
+
+# Count the number of commits
+commit_count=$(git rev-list --count HEAD)
+
+# Write the number of commits to a file
+printf "%s" "$commit_count" > VERSION
+
+# Add the file to staging
+git add VERSION

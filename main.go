@@ -2,59 +2,80 @@ package main
 
 import (
 	"bufio"
+	_ "embed"
 	"fmt"
-	"github.com/aws/aws-sdk-go-v2/aws/arn"
-	"io"
-	"net/url"
-	"strings"
+	"github.com/integrii/flaggy"
+	"github.com/magnuswahlstrand/arn-to-url/awsurl"
+	"os"
+	"os/exec"
+	"runtime"
 )
 
-func destinationUrl(input string) (string, error) {
-	res, err := arn.Parse(input)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse ARN %q: %w", input, err)
-	}
-	resourcePath, err := getResourceConsolePath(res)
-	if err != nil {
-		return "", err
+//go:embed VERSION
+var VERSION string
+
+type Configuration struct {
+	openInBrowser      bool
+	ignoreErrors       bool
+	accessPortalDomain string
+	roleName           string
+}
+
+func configuration() Configuration {
+	c := Configuration{
+		// Default values:
+		openInBrowser:      false,
+		ignoreErrors:       false,
+		accessPortalDomain: "",
+		roleName:           "",
 	}
 
-	if res.Region == "" {
-		return fmt.Sprintf("https://console.aws.amazon.com%s", resourcePath), nil
-	} else {
-		return fmt.Sprintf("https://%s.console.aws.amazon.com%s", res.Region, resourcePath), nil
-	}
+	flaggy.SetVersion(fmt.Sprintf("1.%s.0", VERSION))
+	flaggy.Bool(&c.openInBrowser, "w", "web", "Open URL(s) in the default browser")
+	flaggy.Bool(&c.ignoreErrors, "e", "ignore-errors", "Ignore errors. Only opens or prints successfully resolved URLs")
+	flaggy.String(&c.accessPortalDomain, "d", "domain", "Access portal domain. E.g. 'magnus' for magnus.awsapps.com/start")
+	//flaggy.String(&c.roleName, "r", "role", "Access portal domain. E.g. 'magnus' for magnus.awsapps.com/start")
+	flaggy.Parse()
+	return c
 }
 
 func main() {
-	reader, writer := io.Pipe()
-
-	// Simulate writing to "stdin" by writing to the pipe
-	go func() {
-		defer writer.Close()
-
-		arns := []string{
-			"arn:aws:ecs:eu-west-1:0123456789:service/my-ecs-cluster/my-service",
-			"arn:aws:sqs:eu-west-1:0123456789:job-dlq",
-			"arn:aws:dynamodb:eu-west-1:0123456789:table/data-table",
-			"arn:aws:s3:::some-bucket",
-			"arn:aws:lambda:eu-west-1:0123456789:function:lambda-fn",
+	c := configuration()
+	resolver := awsurl.Resolver{
+		AccessPortalDomain: c.accessPortalDomain,
+		// TODO: This should be a mapping function instead
+		// TODO: Not implemented yet
+		RoleName: c.roleName,
+	}
+	// Set up action to be called when a URL is parsed
+	action := func(url string) error {
+		if c.openInBrowser {
+			return openInBrowser(url)
 		}
-		for _, a := range arns {
-			a := a
-			fmt.Fprintln(writer, a)
+		fmt.Println(url)
+		return nil
+	}
+
+	// Chain resolver and action together, for easier common error handling
+	chain := func(arn string) error {
+		url, err := resolver.FromArn2(arn)
+		if err != nil {
+			return err
 		}
-	}()
 
-	// Read from the pipe (which simulates stdin)
-	scanner := bufio.NewScanner(reader)
+		return action(url)
+	}
 
-	//scanner := bufio.NewScanner(os.Stdin)
-
-	fmt.Println("Reading input (press Ctrl+D to stop):")
+	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
-		line := scanner.Text()
-		destinationUrl(line)
+		if err := chain(scanner.Text()); err != nil {
+			if c.ignoreErrors {
+				continue
+			} else {
+				fmt.Println(err)
+				os.Exit(1)
+			}
+		}
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -62,40 +83,21 @@ func main() {
 	}
 }
 
-func getResourceConsolePath(arn arn.ARN) (string, error) {
-	fmt.Println(arn.Resource)
-	switch arn.Service {
-	case "ecs":
-		parts := strings.Split(arn.Resource, "/")
-		if len(parts) < 3 || parts[0] != "service" {
-			return "", fmt.Errorf("unexpected ARN format for ECS: %s", arn.Resource)
-		}
-		cluster := parts[1]
-		service := parts[2]
-		return fmt.Sprintf("/ecs/v2/clusters/%s/services/%s", cluster, service), nil
+// From https://stackoverflow.com/a/39324149
+// opens the specified URL in the default browser of the user.
+func openInBrowser(url string) error {
+	var cmd string
+	var args []string
 
-	case "dynamodb":
-		tableName := arn.Resource
-		return fmt.Sprintf("/dynamodbv2/home#table?name=%s", tableName), nil
-
-	case "s3":
-		bucketName := arn.Resource
-		return fmt.Sprintf("/s3/buckets/%s", bucketName), nil
-
-	case "lambda":
-		parts := strings.Split(arn.Resource, ":")
-		if len(parts) < 2 || parts[0] != "function" {
-			return "", fmt.Errorf("unexpected ARN format for ECS: %s", arn.Resource)
-		}
-
-		functionName := parts[1]
-		return fmt.Sprintf("/lambda/home#/functions/%s?accountID=%s", functionName, arn.AccountID), nil
-
-	case "sqs":
-		sqsUrl := fmt.Sprintf("https://sqs.%s.amazonaws.com/%s/%s", arn.Region, arn.AccountID, arn.Resource)
-		encodedUrl := url.QueryEscape(sqsUrl)
-		return fmt.Sprintf("/sqs/v3/home#/queues/%s", encodedUrl), nil
-	default:
-		return "", fmt.Errorf("unknown service in ARN: %s", arn.Resource)
+	switch runtime.GOOS {
+	case "windows":
+		cmd = "cmd"
+		args = []string{"/c", "start"}
+	case "darwin":
+		cmd = "open"
+	default: // "linux", "freebsd", "openbsd", "netbsd"
+		cmd = "xdg-open"
 	}
+	args = append(args, url)
+	return exec.Command(cmd, args...).Start()
 }
