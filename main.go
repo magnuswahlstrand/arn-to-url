@@ -38,7 +38,7 @@ func configuration() Configuration {
 	flaggy.Bool(&c.openInBrowser, "w", "web", "Open URL(s) in the default browser (default standard out)")
 	flaggy.Bool(&c.ignoreErrors, "e", "ignore-errors", "Ignore errors. Only opens or prints successfully resolved URLs")
 	flaggy.String(&c.accessPortalDomain, "d", "domain", "Access portal domain. E.g. 'magnus' for magnus.awsapps.com/start")
-	flaggy.StringSlice(&c.roleMappings, "r", "roles", "Comma separated list of account to IAM role to assume. E.g. 12345:admin,54321:dev. NOTE: Only used if access portal domain is set")
+	flaggy.StringSlice(&c.roleMappings, "r", "roles", "Comma separated list of account to IAM role to assume. E.g. 12345:admin,54321:dev. NOTE: Only used if access portal domain is set. If skipped, you will be prompted to choose a role")
 	flaggy.Parse()
 	return c
 }
@@ -58,6 +58,7 @@ func main() {
 		}
 
 		if c.openInBrowser {
+			fmt.Printf("URL: %s\nOpening in the browser...\n", url)
 			return openInBrowser(url)
 		}
 		fmt.Println(url)
